@@ -221,7 +221,7 @@ def makeReport():
         break
     asyncio.run(helper(tasks))
     session.commit()
-    return reportId
+    return str(reportId)
 
 def getReport(reportId):
     reportData=session.query(Report).filter_by(report_id=reportId).all()

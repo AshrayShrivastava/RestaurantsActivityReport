@@ -6,7 +6,7 @@ from routes.LoopKitchen import LoopKitchen
 app = Flask(__name__)
 
 def main():
-    print('hello')
+    # print('hello')
     app.register_blueprint(LoopKitchen.loopKitchen_app)
     serve(app, host="0.0.0.0", port=5000)
 
