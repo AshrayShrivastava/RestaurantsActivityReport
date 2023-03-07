@@ -122,9 +122,17 @@ def getRealUptime(cycle):
     return totalUpTime, upTimeDay, upTimeHour
 
 def insertTimingsToCycle(storeId, lastWeek, lastDay, lastHour, cycle):
+    timings=session.query(Timings).filter_by(store_id=storeId).all()
+    timingByDay = {}
+    for timing in timings:
+        if(timingByDay.get(timing.day)!=None):
+            timingByDay[timing.day].append(timing)
+        else:
+            timingByDay[timing.day]=[timing]
+
     for day in range(0,7):
-        time = session.query(Timings).filter_by(store_id=storeId).filter_by(day=day).all()
-        if(len(time)==0):
+        time = timingByDay.get(day)
+        if(time==None):
             start=datetime.strptime("00:00:00", '%H:%M:%S').time()
             end=datetime.strptime("23:59:59", '%H:%M:%S').time()
             cycle.append([day,start,'start'])
@@ -148,7 +156,11 @@ def insertUpdatedsToCycle(storeId, curr, delta, lastWeek, cycle):
     statusWeek='inactive'
     diffWeek = timedelta(days=7)
     
-    entriesToRemove=[]
+    storeZone = session.query(Zones.zone).filter_by(store_id=storeId).first()
+    if(storeZone==None):
+        zone='America/Chicago'
+    else:
+        zone=storeZone[0]
 
     for entry in entries:
         currDelta = curr-entry[0]
@@ -157,32 +169,40 @@ def insertUpdatedsToCycle(storeId, curr, delta, lastWeek, cycle):
             statusWeek=entry[1]
 
         if(entry[0]<lastWeek):
-            entriesToRemove.append(entry)
-
-    for e in entriesToRemove:
-        entries.remove(e)
-
-    entries.append([lastWeek-timedelta(microseconds=1),statusWeek])
-
-    storeZone = session.query(Zones.zone).filter_by(store_id=storeId).first()
-    if(storeZone==None):
-        zone='America/Chicago'
-    else:
-        zone=storeZone[0]
-    
-    for entry in entries:
+            continue
+        
         status=entry[1]
         to_zone=tz.gettz(zone)
         date = entry[0].astimezone(to_zone)
         day = date.weekday()
         time = date.time()
         cycle.append([day,time,status])
+        
+    boundry = lastWeek-timedelta(microseconds=1)
+    to_zone=tz.gettz(zone)
+    date = boundry.astimezone(to_zone)
+    day = date.weekday()
+    time = date.time()
+    cycle.append([day,time,statusWeek])
     
     cycle.sort()
 
-# async def storeReport(storeId, lastWeek, lastDay, lastHour):
-#     pass
+async def storeReport(storeId, lastWeek, lastDay, lastHour, curr, delta, reportId):
+    # print(storeId)
+    cycle=[]
+    insertTimingsToCycle(storeId, lastWeek, lastDay, lastHour, cycle)
+    
+    maxUpTimeWeek, maxUpTimeDay, maxUpTimeHour = getMaxUptime(cycle)
 
+    insertUpdatedsToCycle(storeId, curr, delta, lastWeek, cycle)
+    
+    UpTimeWeek, UpTimeDay, UpTimeHour = getRealUptime(cycle)
+
+    report=Report(report_id=reportId, store_id=storeId,uptime_last_hour=UpTimeHour/timedelta(minutes=1),uptime_last_day=UpTimeDay/timedelta(hours=1),
+                    uptime_last_week=UpTimeWeek/timedelta(hours=1),downtime_last_hour=(maxUpTimeHour-UpTimeHour)/timedelta(minutes=1),
+                    downtime_last_day=(maxUpTimeDay-UpTimeDay)/timedelta(hours=1),downtime_last_week=(maxUpTimeWeek-UpTimeWeek)/timedelta(hours=1))
+
+    session.add(report)
 
 def makeReport():
     curr=datetime.now().astimezone(tz.tzlocal())
@@ -190,25 +210,16 @@ def makeReport():
     lastWeek=curr-timedelta(days=7)
     lastDay=curr-timedelta(days=1)
     lastHour=curr-timedelta(hours=1)
-    stores = session.query(Update.store_id).filter(Update.timestamp_utc>curr-delta).distinct().all()
+    stores = session.query(Update.store_id).distinct().all()
     reportId=uuid4()
     # print(len(stores))
+    tasks=[]
+    # print(len(stores))
     for store in stores:
-        cycle=[]
-        insertTimingsToCycle(store[0], lastWeek, lastDay, lastHour, cycle)
-        
-        maxUpTimeWeek, maxUpTimeDay, maxUpTimeHour = getMaxUptime(cycle)
-        # print(maxUpTimeWeek, maxUpTimeDay, maxUpTimeHour)
-
-        insertUpdatedsToCycle(store[0], curr, delta, lastWeek, cycle)
-        
-        UpTimeWeek, UpTimeDay, UpTimeHour = getRealUptime(cycle)
-
-        report=Report(report_id=reportId, store_id=store[0],uptime_last_hour=UpTimeHour/timedelta(minutes=1),uptime_last_day=UpTimeDay/timedelta(hours=1),
-                      uptime_last_week=UpTimeWeek/timedelta(hours=1),downtime_last_hour=(maxUpTimeHour-UpTimeHour)/timedelta(minutes=1),
-                      downtime_last_day=(maxUpTimeDay-UpTimeDay)/timedelta(hours=1),downtime_last_week=(maxUpTimeWeek-UpTimeWeek)/timedelta(hours=1))
-
-        session.add(report)
+        # print(store)
+        tasks.append(storeReport(store[0], lastWeek, lastDay, lastHour, curr, delta, reportId))
+        break
+    asyncio.run(helper(tasks))
     session.commit()
     return reportId
 

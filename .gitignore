@@ -1,6 +1,6 @@
 \models\__pycache__
 \routes\__pycache__
 \service\__pycache__
-Reports/
+Reports/*
 test.py
-Data/
+Data/*
